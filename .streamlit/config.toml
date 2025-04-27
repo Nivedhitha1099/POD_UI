@@ -1,8 +1,11 @@
 [server]
-maxUploadSize = 2000
+maxUploadSize = 3000
 enableCORS = true
 enableXsrfProtection = true
 maxMessageSize = 2000
+headless = true
+runOnSave = true
+browser.gatherUsageStats = false
 
 [theme]
 primaryColor = "#FF4B4B"
