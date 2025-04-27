@@ -12,6 +12,8 @@ import time
 from bs4 import BeautifulSoup
 import shutil
 import glob
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
 
 # Set page config
 st.set_page_config(
@@ -48,19 +50,16 @@ def load_latest_report():
         st.error(f"Error loading report file: {str(e)}")
         return None
 
-def process_large_zip_file(zip_path, pattern_data, progress_bar):
-    """Process a large ZIP file in chunks to handle memory efficiently."""
-    temp_dir = tempfile.mkdtemp()
+def process_zip_chunk(args):
+    """Process a chunk of files from the ZIP archive."""
+    zip_path, start_idx, end_idx = args
     try:
-        # Extract ZIP file
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            total_files = len(zip_ref.namelist())
-            processed_files = 0
-            
+            files = zip_ref.namelist()[start_idx:end_idx]
             combined_html = ""
-            fragment_sources = []
+            fragment_data = []
             
-            for file in zip_ref.namelist():
+            for file in files:
                 if file.endswith('.html') or file.endswith('.xhtml'):
                     with zip_ref.open(file) as f:
                         html_content = f.read().decode('utf-8')
@@ -71,22 +70,50 @@ def process_large_zip_file(zip_path, pattern_data, progress_bar):
                                 'original_file': file,
                                 'line_number': section.sourceline
                             }
-                            fragment_sources.append(fragment_info)
+                            fragment_data.append(fragment_info)
                             combined_html += section.prettify()
+            return combined_html, fragment_data
+    except Exception as e:
+        st.error(f"Error processing zip chunk: {str(e)}")
+        return "", []
+
+def process_large_zip_file(zip_path, pattern_data, progress_bar):
+    """Process a large ZIP file in chunks to handle memory efficiently."""
+    temp_dir = tempfile.mkdtemp()
+    try:
+        # Process ZIP file in chunks using multiprocessing
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            files = zip_ref.namelist()
+            chunk_size = max(1, len(files) // (multiprocessing.cpu_count() * 2))
+            chunks = [(zip_path, i, min(i + chunk_size, len(files))) 
+                     for i in range(0, len(files), chunk_size)]
+        
+        combined_html = []
+        fragment_sources = []
+        total_chunks = len(chunks)
+        
+        with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count() * 2) as executor:
+            for i, (html_chunk, fragment_chunk) in enumerate(executor.map(process_zip_chunk, chunks)):
+                combined_html.append(html_chunk)
+                fragment_sources.extend(fragment_chunk)
                 
-                processed_files += 1
-                progress = (processed_files / total_files) * 100
+                # Update progress
+                progress = (i + 1) / total_chunks * 100
                 st.session_state.processing_progress = progress
                 progress_bar.progress(int(progress))
+        
+        if not combined_html:
+            st.error("No valid HTML files processed")
+            return None, None, None
         
         # Process fragments
         initial_fragment_id = 0
         fragment_name = os.path.splitext(os.path.basename(zip_path))[0]
-        soup = BeautifulSoup(combined_html, 'html.parser')
+        soup = BeautifulSoup(''.join(combined_html), 'html.parser')
         initial_parent_tag = soup.find('section').name if soup.find('section') else 'body'
         
         fragment_data, _ = extract_fragments(
-            combined_html, initial_fragment_id, fragment_name,
+            ''.join(combined_html), initial_fragment_id, fragment_name,
             initial_parent_tag, fragment_sources
         )
         
