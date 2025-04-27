@@ -1,9 +1,12 @@
 [server]
 maxUploadSize = 2000
+enableCORS = true
+enableXsrfProtection = true
+maxMessageSize = 2000
 
 [theme]
-primaryColor = "#FF0000"
+primaryColor = "#FF4B4B"
 backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F0F0F0"
+secondaryBackgroundColor = "#F0F2F6"
 textColor = "#262730"
-font = "sans serif"
+font = "sans serif" 
