@@ -2,7 +2,7 @@ import streamlit as st
 import os
 import json
 import pandas as pd
-from app2 import (
+from utils import (
     extract_fragments, perform_clustering, match_patterns,
     structure_clusters, generate_analysis_report
 )
