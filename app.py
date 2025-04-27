@@ -14,14 +14,28 @@ import shutil
 import glob
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# Configure requests session with retry logic
+session = requests.Session()
+retry_strategy = Retry(
+    total=3,
+    backoff_factor=1,
+    status_forcelist=[500, 502, 503, 504]
+)
+adapter = HTTPAdapter(max_retries=retry_strategy)
+session.mount("http://", adapter)
+session.mount("https://", adapter)
 
 # Set environment variable for max upload size
-os.environ['STREAMLIT_SERVER_MAX_UPLOAD_SIZE'] = '3000'
+os.environ['STREAMLIT_SERVER_MAX_UPLOAD_SIZE'] = '2000'
 
 # Set page config
 st.set_page_config(
     page_title="HTML Fragment Analysis",
-    page_icon="��",
+    page_icon="🔍",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -37,6 +51,16 @@ if 'report_data' not in st.session_state:
     st.session_state.report_data = None
 if 'processing_progress' not in st.session_state:
     st.session_state.processing_progress = 0
+if 'current_fragment_index' not in st.session_state:
+    st.session_state.current_fragment_index = 0
+if 'error_message' not in st.session_state:
+    st.session_state.error_message = None
+
+def handle_error(e, message="An error occurred"):
+    """Handle errors and display them to the user"""
+    st.session_state.error_message = f"{message}: {str(e)}"
+    st.error(st.session_state.error_message)
+    return None
 
 def load_latest_report():
     """Load the most recent report file."""
@@ -143,12 +167,12 @@ def process_large_zip_file(zip_path, pattern_data, progress_bar):
 
 def process_uploaded_files(zip_file, pattern_data):
     """Handle file upload and processing with progress tracking."""
-    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-        # Write uploaded file to temporary file
-        tmp_file.write(zip_file.getvalue())
-        tmp_file_path = tmp_file.name
-    
     try:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+            # Write uploaded file to temporary file
+            tmp_file.write(zip_file.getvalue())
+            tmp_file_path = tmp_file.name
+        
         # Create progress bar
         progress_bar = st.progress(0)
         st.session_state.processing_progress = 0
@@ -162,9 +186,15 @@ def process_uploaded_files(zip_file, pattern_data):
         
         return result
     
+    except Exception as e:
+        return handle_error(e, "Error processing uploaded files")
     finally:
         # Clean up temporary file
-        os.unlink(tmp_file_path)
+        try:
+            if 'tmp_file_path' in locals():
+                os.unlink(tmp_file_path)
+        except Exception as e:
+            st.warning(f"Warning: Could not clean up temporary file: {str(e)}")
 
 def display_noise_analysis():
     st.title("Noise Fragment Analysis")
@@ -223,10 +253,6 @@ def display_noise_analysis():
     if not filtered_fragments:
         st.info("No fragments match the current filter criteria.")
         return
-    
-    # Initialize current fragment index in session state if not exists
-    if 'current_fragment_index' not in st.session_state:
-        st.session_state.current_fragment_index = 0
     
     # Navigation controls
     st.header("Fragment Details")
@@ -299,68 +325,87 @@ def display_noise_analysis():
         st.warning("No pattern comparison available for this fragment.")
 
 def main():
-    st.title("HTML Fragment Analysis")
-    
-    # Step 1: Upload Pattern Files
-    st.header("Step 1: Upload Pattern Files")
-    pattern_files = st.file_uploader(
-        "Select HTML Pattern Files (you can select multiple files)",
-        type=['html'],
-        accept_multiple_files=True
-    )
-    
-    if pattern_files:
-        pattern_data = []
-        for file in pattern_files:
-            html_content = file.read().decode('utf-8')
-            fragment_data, _ = extract_fragments(html_content, 0, file.name, 'body')
-            pattern_data.extend(fragment_data)
+    try:
+        st.title("HTML Fragment Analysis")
         
-        if pattern_data:
-            st.session_state.pattern_data = pd.DataFrame(pattern_data)
-            st.success(f"Successfully processed {len(pattern_files)} pattern files")
-            st.write(f"Total patterns loaded: {len(pattern_data)}")
-    
-    # Step 2: Upload and Process ZIP File
-    st.header("Step 2: Upload and Process ZIP File")
-    zip_file = st.file_uploader(
-        "Select ZIP File (up to 2GB)", 
-        type=['zip'],
-        accept_multiple_files=False
-    )
-    
-    if zip_file and st.session_state.pattern_data is not None:
-        if st.button("Process Files"):
-            with st.spinner("Processing files..."):
-                start_time = time.time()
-                df_clustered, clusters, noise = process_uploaded_files(
-                    zip_file, st.session_state.pattern_data
-                )
+        # Display any previous error message
+        if st.session_state.error_message:
+            st.error(st.session_state.error_message)
+            if st.button("Clear Error"):
+                st.session_state.error_message = None
+                st.experimental_rerun()
+        
+        # Step 1: Upload Pattern Files
+        st.header("Step 1: Upload Pattern Files")
+        pattern_files = st.file_uploader(
+            "Select HTML Pattern Files (you can select multiple files)",
+            type=['html'],
+            accept_multiple_files=True
+        )
+        
+        if pattern_files:
+            try:
+                pattern_data = []
+                for file in pattern_files:
+                    html_content = file.read().decode('utf-8')
+                    fragment_data, _ = extract_fragments(html_content, 0, file.name, 'body')
+                    pattern_data.extend(fragment_data)
                 
-                if df_clustered is not None:
-                    # Generate report
-                    with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as temp_file:
-                        report_path = generate_analysis_report(
-                            df_clustered, clusters, noise, temp_file.name,
-                            st.session_state.pattern_data
+                if pattern_data:
+                    st.session_state.pattern_data = pd.DataFrame(pattern_data)
+                    st.success(f"Successfully processed {len(pattern_files)} pattern files")
+                    st.write(f"Total patterns loaded: {len(pattern_data)}")
+            except Exception as e:
+                handle_error(e, "Error processing pattern files")
+        
+        # Step 2: Upload and Process ZIP File
+        st.header("Step 2: Upload and Process ZIP File")
+        zip_file = st.file_uploader(
+            "Select ZIP File (up to 2GB)", 
+            type=['zip'],
+            accept_multiple_files=False
+        )
+        
+        if zip_file and st.session_state.pattern_data is not None:
+            if st.button("Process Files"):
+                with st.spinner("Processing files..."):
+                    try:
+                        start_time = time.time()
+                        df_clustered, clusters, noise = process_uploaded_files(
+                            zip_file, st.session_state.pattern_data
                         )
                         
-                        with open(report_path, 'r') as f:
-                            st.session_state.report_data = json.load(f)
-                    
-                    processing_time = time.time() - start_time
-                    st.success(f"Processing completed in {processing_time:.2f} seconds")
-                    
-    
-    # Display noise analysis
-    if st.session_state.report_data is not None:
-        display_noise_analysis()
-    else:
-        # Try to load existing report
-        st.session_state.report_data = load_latest_report()
+                        if df_clustered is not None:
+                            # Generate report
+                            with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as temp_file:
+                                report_path = generate_analysis_report(
+                                    df_clustered, clusters, noise, temp_file.name,
+                                    st.session_state.pattern_data
+                                )
+                                
+                                with open(report_path, 'r') as f:
+                                    st.session_state.report_data = json.load(f)
+                            
+                            processing_time = time.time() - start_time
+                            st.success(f"Processing completed in {processing_time:.2f} seconds")
+                    except Exception as e:
+                        handle_error(e, "Error during file processing")
+        
+        # Display noise analysis
         if st.session_state.report_data is not None:
-            st.info("Loaded existing report data.")
             display_noise_analysis()
+        else:
+            # Try to load existing report
+            try:
+                st.session_state.report_data = load_latest_report()
+                if st.session_state.report_data is not None:
+                    st.info("Loaded existing report data.")
+                    display_noise_analysis()
+            except Exception as e:
+                handle_error(e, "Error loading existing report")
+    
+    except Exception as e:
+        handle_error(e, "Unexpected error in main application")
 
 if __name__ == "__main__":
     main() 
