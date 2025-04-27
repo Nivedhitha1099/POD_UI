@@ -15,14 +15,15 @@ import glob
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 
-# Configure server settings
-
+# Set environment variable for max upload size
+os.environ['STREAMLIT_SERVER_MAX_UPLOAD_SIZE'] = '3000'
 
 # Set page config
 st.set_page_config(
     page_title="HTML Fragment Analysis",
-    page_icon="🔍",
-    layout="wide"
+    page_icon="��",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 # Initialize session state
@@ -303,7 +304,7 @@ def main():
     # Step 1: Upload Pattern Files
     st.header("Step 1: Upload Pattern Files")
     pattern_files = st.file_uploader(
-        "Select HTML Pattern Files",
+        "Select HTML Pattern Files (you can select multiple files)",
         type=['html'],
         accept_multiple_files=True
     )
@@ -318,6 +319,7 @@ def main():
         if pattern_data:
             st.session_state.pattern_data = pd.DataFrame(pattern_data)
             st.success(f"Successfully processed {len(pattern_files)} pattern files")
+            st.write(f"Total patterns loaded: {len(pattern_data)}")
     
     # Step 2: Upload and Process ZIP File
     st.header("Step 2: Upload and Process ZIP File")
