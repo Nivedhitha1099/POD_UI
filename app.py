@@ -15,6 +15,9 @@ import glob
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 
+# Configure server settings
+st.set_option('server.maxUploadSize', 2000)
+
 # Set page config
 st.set_page_config(
     page_title="HTML Fragment Analysis",
