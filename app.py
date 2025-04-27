@@ -88,18 +88,29 @@ def process_zip_chunk(args):
             fragment_data = []
             
             for file in files:
-                if file.endswith('.html') or file.endswith('.xhtml'):
-                    with zip_ref.open(file) as f:
-                        html_content = f.read().decode('utf-8')
-                        soup = BeautifulSoup(html_content, 'html.parser')
-                        for section in soup.find_all('section'):
-                            fragment_info = {
-                                'html': section.prettify(),
-                                'original_file': file,
-                                'line_number': section.sourceline
-                            }
-                            fragment_data.append(fragment_info)
-                            combined_html += section.prettify()
+                try:
+                    if file.endswith('.html') or file.endswith('.xhtml'):
+                        with zip_ref.open(file) as f:
+                            try:
+                                html_content = f.read().decode('utf-8')
+                                soup = BeautifulSoup(html_content, 'html.parser')
+                                for section in soup.find_all('section'):
+                                    fragment_info = {
+                                        'html': section.prettify(),
+                                        'original_file': file,
+                                        'line_number': section.sourceline
+                                    }
+                                    fragment_data.append(fragment_info)
+                                    combined_html += section.prettify()
+                            except UnicodeDecodeError:
+                                st.warning(f"Skipping file {file} due to encoding issues")
+                                continue
+                            except Exception as e:
+                                st.warning(f"Error processing file {file}: {str(e)}")
+                                continue
+                except Exception as e:
+                    st.warning(f"Error accessing file {file}: {str(e)}")
+                    continue
             return combined_html, fragment_data
     except Exception as e:
         st.error(f"Error processing zip chunk: {str(e)}")
@@ -109,9 +120,19 @@ def process_large_zip_file(zip_path, pattern_data, progress_bar):
     """Process a large ZIP file in chunks to handle memory efficiently."""
     temp_dir = tempfile.mkdtemp()
     try:
+        # Verify ZIP file integrity first
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.testzip()
+        except Exception as e:
+            return handle_error(e, "Invalid or corrupted ZIP file")
+
         # Process ZIP file in chunks using multiprocessing
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             files = zip_ref.namelist()
+            if not files:
+                return handle_error(None, "ZIP file is empty")
+            
             chunk_size = max(1, len(files) // (multiprocessing.cpu_count() * 2))
             chunks = [(zip_path, i, min(i + chunk_size, len(files))) 
                      for i in range(0, len(files), chunk_size)]
@@ -122,8 +143,10 @@ def process_large_zip_file(zip_path, pattern_data, progress_bar):
         
         with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count() * 2) as executor:
             for i, (html_chunk, fragment_chunk) in enumerate(executor.map(process_zip_chunk, chunks)):
-                combined_html.append(html_chunk)
-                fragment_sources.extend(fragment_chunk)
+                if html_chunk:  # Only append if we got valid content
+                    combined_html.append(html_chunk)
+                if fragment_chunk:  # Only extend if we got valid fragments
+                    fragment_sources.extend(fragment_chunk)
                 
                 # Update progress
                 progress = (i + 1) / total_chunks * 100
@@ -131,46 +154,58 @@ def process_large_zip_file(zip_path, pattern_data, progress_bar):
                 progress_bar.progress(int(progress))
         
         if not combined_html:
-            st.error("No valid HTML files processed")
-            return None, None, None
+            return handle_error(None, "No valid HTML files found in ZIP")
         
         # Process fragments
-        initial_fragment_id = 0
-        fragment_name = os.path.splitext(os.path.basename(zip_path))[0]
-        soup = BeautifulSoup(''.join(combined_html), 'html.parser')
-        initial_parent_tag = soup.find('section').name if soup.find('section') else 'body'
-        
-        fragment_data, _ = extract_fragments(
-            ''.join(combined_html), initial_fragment_id, fragment_name,
-            initial_parent_tag, fragment_sources
-        )
-        
-        if not fragment_data:
-            st.error("No valid HTML files processed")
-            return None, None, None
-        
-        # Create DataFrame and perform clustering
-        columns = ["fragment_id", "fragment_name", "Level", "element_type", "element_class",
-                  "attributes", "structure", "original_file", "original_line"]
-        df_combined = pd.DataFrame(fragment_data, columns=columns)
-        
-        df_combined = match_patterns(df_combined, pattern_data)
-        df_clustered = perform_clustering(df_combined)
-        
-        clusters, noise = structure_clusters(df_clustered)
-        
-        return df_clustered, clusters, noise
+        try:
+            initial_fragment_id = 0
+            fragment_name = os.path.splitext(os.path.basename(zip_path))[0]
+            soup = BeautifulSoup(''.join(combined_html), 'html.parser')
+            initial_parent_tag = soup.find('section').name if soup.find('section') else 'body'
+            
+            fragment_data, _ = extract_fragments(
+                ''.join(combined_html), initial_fragment_id, fragment_name,
+                initial_parent_tag, fragment_sources
+            )
+            
+            if not fragment_data:
+                return handle_error(None, "No valid fragments extracted from HTML")
+            
+            # Create DataFrame and perform clustering
+            columns = ["fragment_id", "fragment_name", "Level", "element_type", "element_class",
+                      "attributes", "structure", "original_file", "original_line"]
+            df_combined = pd.DataFrame(fragment_data, columns=columns)
+            
+            df_combined = match_patterns(df_combined, pattern_data)
+            df_clustered = perform_clustering(df_combined)
+            
+            clusters, noise = structure_clusters(df_clustered)
+            
+            return df_clustered, clusters, noise
+        except Exception as e:
+            return handle_error(e, "Error processing extracted fragments")
     
+    except Exception as e:
+        return handle_error(e, "Error processing ZIP file")
     finally:
         # Clean up temporary directory
-        shutil.rmtree(temp_dir)
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception as e:
+            st.warning(f"Warning: Could not clean up temporary directory: {str(e)}")
 
 def process_uploaded_files(zip_file, pattern_data):
     """Handle file upload and processing with progress tracking."""
     try:
+        # Validate file size
+        if zip_file.size > 2000 * 1024 * 1024:  # 2GB in bytes
+            return handle_error(None, "File size exceeds 2GB limit")
+        
         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-            # Write uploaded file to temporary file
-            tmp_file.write(zip_file.getvalue())
+            # Write uploaded file to temporary file in chunks
+            chunk_size = 1024 * 1024  # 1MB chunks
+            for chunk in zip_file.getvalue():
+                tmp_file.write(chunk)
             tmp_file_path = tmp_file.name
         
         # Create progress bar
