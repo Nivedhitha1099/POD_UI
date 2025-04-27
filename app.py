@@ -318,7 +318,11 @@ def main():
     
     # Step 2: Upload and Process ZIP File
     st.header("Step 2: Upload and Process ZIP File")
-    zip_file = st.file_uploader("Select ZIP File", type=['zip'])
+    zip_file = st.file_uploader(
+        "Select ZIP File (up to 2GB)", 
+        type=['zip'],
+        accept_multiple_files=False
+    )
     
     if zip_file and st.session_state.pattern_data is not None:
         if st.button("Process Files"):
