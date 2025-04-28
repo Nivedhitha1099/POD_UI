@@ -195,17 +195,15 @@ def process_large_zip_file(zip_path, pattern_data, progress_bar):
             st.warning(f"Warning: Could not clean up temporary directory: {str(e)}")
 
 def process_uploaded_files(zip_file, pattern_data):
-    """Handle file upload and processing with progress tracking."""
+    
     try:
         # Validate file size
         if zip_file.size > 2000 * 1024 * 1024:  # 2GB in bytes
             return handle_error(None, "File size exceeds 2GB limit")
         
         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-            # Write uploaded file to temporary file in chunks
-            chunk_size = 1024 * 1024  # 1MB chunks
-            for chunk in zip_file.getvalue():
-                tmp_file.write(chunk)
+            # Write uploaded file to temporary file correctly
+            tmp_file.write(zip_file.getvalue())
             tmp_file_path = tmp_file.name
         
         # Create progress bar
@@ -227,7 +225,7 @@ def process_uploaded_files(zip_file, pattern_data):
         # Clean up temporary file
         try:
             if 'tmp_file_path' in locals():
-                os.unlink(tmp_file_path)
+                os.remove(tmp_file_path)
         except Exception as e:
             st.warning(f"Warning: Could not clean up temporary file: {str(e)}")
 
