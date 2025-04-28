@@ -30,7 +30,7 @@ session.mount("http://", adapter)
 session.mount("https://", adapter)
 
 # Set environment variable for max upload size
-os.environ['STREAMLIT_SERVER_MAX_UPLOAD_SIZE'] = '2000'
+os.environ['STREAMLIT_SERVER_MAX_UPLOAD_SIZE'] = '3000'
 
 # Set page config
 st.set_page_config(
