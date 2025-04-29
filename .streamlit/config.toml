@@ -1,7 +1,7 @@
 [server]
 maxUploadSize = 3000
-enableCORS = true
-enableXsrfProtection = true
+enableCORS = false
+enableXsrfProtection = false
 maxMessageSize = 2000
 headless = true
 runOnSave = true
