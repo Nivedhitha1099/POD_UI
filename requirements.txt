@@ -1,5 +1,5 @@
 streamlit==1.32.0
-
+Flask==3.0.2
 beautifulsoup4==4.12.3
 pandas==2.2.1
 scikit-learn==1.4.1
